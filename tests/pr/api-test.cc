@@ -1,5 +1,7 @@
 #include <nexus/app.hh>
 
+#include <typed-geometry/tg.hh>
+
 #include <arcana-incubator/asset-loading/mesh_loader.hh>
 #include <arcana-incubator/device-abstraction/device_abstraction.hh>
 
@@ -137,10 +139,11 @@ struct cam_constants
 
 APP("api_test")
 {
+    auto ctx = pr::Context(pr::backend::vulkan);
+
     inc::da::SDLWindow window;
     window.initialize("api test");
-
-    auto ctx = pr::Context(phi::window_handle{window.getSdlWindow()}, pr::backend::vulkan);
+    auto swapchain = ctx.make_swapchain(phi::window_handle{window.getSdlWindow()}, window.getSize());
 
     // pr::graphics_pipeline_state pso_render;
     pr::auto_graphics_pipeline_state pso_blit;
@@ -151,8 +154,8 @@ APP("api_test")
     pr::auto_buffer b_modelmats;
     pr::auto_buffer b_camconsts;
 
-    pr::auto_render_target t_depth;
-    pr::auto_render_target t_color;
+    // pr::auto_render_target t_depth;
+    // pr::auto_render_target t_color;
 
     pr::auto_prebuilt_argument sv_render;
 
@@ -170,7 +173,8 @@ APP("api_test")
         config.depth = phi::depth_function::none;
         config.cull = phi::cull_mode::none;
 
-        pso_blit = ctx.make_pipeline_state(pr::graphics_pass(s_vertex, s_pixel).arg(1, 0, 1).config(config), pr::framebuffer(ctx.get_backbuffer_format()));
+        pso_blit = ctx.make_pipeline_state(pr::graphics_pass(s_vertex, s_pixel).arg(1, 0, 1).config(config),
+                                           pr::framebuffer(ctx.get_backbuffer_format(swapchain)));
     }
 
     // load mesh buffers
@@ -179,20 +183,20 @@ APP("api_test")
         auto const mesh = inc::assets::load_binary_mesh("res/arcana-sample-resources/phi/mesh/ball.mesh");
 
         // create an upload buffer and memcpy the mesh data to it
-        auto const upbuff = ctx.make_upload_buffer(mesh.get_vertex_size_bytes() + mesh.get_index_size_bytes());
-        ctx.write_buffer(upbuff, mesh.vertices.data(), mesh.get_vertex_size_bytes());
-        ctx.write_buffer(upbuff, mesh.indices.data(), mesh.get_index_size_bytes(), mesh.get_vertex_size_bytes());
+        auto const upbuff = ctx.make_upload_buffer(mesh.vertices.size_bytes() + mesh.indices.size_bytes());
+        ctx.write_to_buffer(upbuff, mesh.vertices);
+        ctx.write_to_buffer(upbuff, mesh.indices, mesh.vertices.size_bytes());
 
         // create device-memory vertex/index buffers
-        b_vertices = ctx.make_buffer(mesh.get_vertex_size_bytes(), sizeof(inc::assets::simple_vertex));
-        b_indices = ctx.make_buffer(mesh.get_index_size_bytes(), sizeof(uint32_t));
+        b_vertices = ctx.make_buffer(mesh.vertices.size_bytes(), sizeof(inc::assets::simple_vertex));
+        b_indices = ctx.make_buffer(mesh.indices.size_bytes(), sizeof(uint32_t));
 
         {
             auto frame = ctx.make_frame();
 
             // copy to them
             frame.copy(upbuff, b_vertices);
-            frame.copy(upbuff, b_indices, mesh.get_vertex_size_bytes());
+            frame.copy(upbuff, b_indices, mesh.vertices.size_bytes());
 
             ctx.submit(cc::move(frame));
         }
@@ -209,37 +213,45 @@ APP("api_test")
         b_modelmats = ctx.make_upload_buffer(sizeof(tg::mat4) * modelmats.size(), sizeof(tg::mat4));
         b_camconsts = ctx.make_upload_buffer(sizeof(cam_constants));
 
-        ctx.write_buffer(b_modelmats, modelmats.data(), sizeof(tg::mat4) * modelmats.size());
+        ctx.write_to_buffer(b_modelmats, modelmats);
     }
 
     sv_render = ctx.build_argument().add(b_modelmats).make_graphics();
 
+    tg::isize2 backbuffer_size;
+
     auto create_targets = [&](tg::isize2 size) {
-        t_depth = ctx.make_target(size, pr::format::depth32f);
-        t_color = ctx.make_target(size, pr::format::rgba16f);
+        //   t_depth = ctx.make_target(size, pr::format::depth32f);
+        //   t_color = ctx.make_target(size, pr::format::rgba16f);
+        backbuffer_size = size;
 
         auto const vp = tg::perspective_directx(60_deg, size.width / float(size.height), 0.1f, 10000.f)
                         * tg::look_at_directx(tg::pos3(5, 5, 5), tg::pos3(0, 0, 0), tg::vec3(0, 1, 0));
-        ctx.write_buffer_t(b_camconsts, cam_constants{vp});
+        ctx.write_to_buffer(b_camconsts, cam_constants{vp});
     };
 
-    create_targets(ctx.get_backbuffer_size());
+    create_targets(ctx.get_backbuffer_size(swapchain));
 
     while (!window.isRequestingClose())
     {
         window.pollEvents();
-
         if (window.isMinimized())
             continue;
 
         if (window.clearPendingResize())
-            ctx.on_window_resize(window.getSize());
+        {
+            ctx.on_window_resize(swapchain, window.getSize());
+            ctx.clear_resource_caches();
+        }
 
-        if (ctx.clear_backbuffer_resize())
-            create_targets(ctx.get_backbuffer_size());
+        if (ctx.clear_backbuffer_resize(swapchain))
+            create_targets(ctx.get_backbuffer_size(swapchain));
 
         {
             auto frame = ctx.make_frame();
+
+            auto t_depth = ctx.get_target(backbuffer_size, pr::format::depth32f);
+            auto t_color = ctx.get_target(backbuffer_size, pr::format::rgba16f);
 
             {
                 auto fb = frame.make_framebuffer(t_color, t_depth);
@@ -248,7 +260,7 @@ APP("api_test")
                 phi::pipeline_config config;
                 config.depth = phi::depth_function::less;
                 config.cull = phi::cull_mode::back;
-                auto gp = pr::graphics_pass<inc::assets::simple_vertex>(config, render_vs, pixel_vs).arg(1, 0, 0, true).constants();
+                auto gp = pr::graphics_pass<inc::assets::simple_vertex>(config, render_vs, pixel_vs).arg(1, 0, 0, true).enable_constants();
 
                 // bind a persisted argument, plus a CBV
                 auto pass = fb.make_pass(gp).bind(sv_render, b_camconsts);
@@ -260,7 +272,7 @@ APP("api_test")
                 }
             }
 
-            auto backbuffer = ctx.acquire_backbuffer();
+            auto backbuffer = ctx.acquire_backbuffer(swapchain);
 
             frame.transition(t_color, phi::resource_state::shader_resource, phi::shader_stage::pixel);
 
@@ -282,7 +294,7 @@ APP("api_test")
             ctx.submit(cc::move(frame));
         }
 
-        ctx.present();
+        ctx.present(swapchain);
     }
 
     ctx.flush();

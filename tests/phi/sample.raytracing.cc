@@ -11,6 +11,7 @@
 
 #include <typed-geometry/tg.hh>
 
+#include <phantasm-hardware-interface/arguments.hh>
 #include <phantasm-hardware-interface/commands.hh>
 #include <phantasm-hardware-interface/detail/unique_buffer.hh>
 #include <phantasm-hardware-interface/window_handle.hh>
@@ -20,20 +21,29 @@
 #include <arcana-incubator/device-abstraction/device_abstraction.hh>
 #include <arcana-incubator/device-abstraction/timer.hh>
 
+#include "sample_util.hh"
 #include "scene.hh"
-#include "texture_util.hh"
 
 void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const& sample_config, phi::backend_config const& backend_config)
 {
     using namespace phi;
 
+    // backend init
+    backend.initialize(backend_config);
+
+    // window init
+    inc::da::initialize();
     inc::da::SDLWindow window;
     window.initialize(sample_config.window_title);
-    backend.initialize(backend_config, {window.getSdlWindow()});
+
+    // main swapchain creation
+    phi::handle::swapchain const main_swapchain = backend.createSwapchain({window.getSdlWindow()}, window.getSize());
+    unsigned const msc_num_backbuffers = backend.getNumBackbuffers(main_swapchain);
+    phi::format const msc_backbuf_format = backend.getBackbufferFormat(main_swapchain);
 
     if (!backend.isRaytracingEnabled())
     {
-        LOG(warning)("Current GPU has no raytracing capabilities");
+        LOG_WARN("Current GPU has no raytracing capabilities");
         return;
     }
 
@@ -82,8 +92,8 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
                 resources.num_indices = unsigned(mesh_data.indices.size());
                 resources.num_vertices = unsigned(mesh_data.vertices.size());
 
-                auto const vert_size = mesh_data.get_vertex_size_bytes();
-                auto const ind_size = mesh_data.get_index_size_bytes();
+                auto const vert_size = mesh_data.vertices.size_bytes();
+                auto const ind_size = mesh_data.indices.size_bytes();
 
                 resources.vertex_buffer = backend.createBuffer(vert_size, sizeof(inc::assets::simple_vertex));
                 resources.index_buffer = backend.createBuffer(ind_size, sizeof(int));
@@ -95,8 +105,8 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
                     writer.add_command(tcmd);
                 }
 
-                upload_buffer = backend.createMappedBuffer(vert_size + ind_size);
-                std::byte* const upload_mapped = backend.getMappedMemory(upload_buffer);
+                upload_buffer = backend.createUploadBuffer(vert_size + ind_size);
+                std::byte* const upload_mapped = backend.mapBuffer(upload_buffer);
 
                 std::memcpy(upload_mapped, mesh_data.vertices.data(), vert_size);
                 std::memcpy(upload_mapped + vert_size, mesh_data.indices.data(), ind_size);
@@ -114,7 +124,7 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
 
             auto const meshupload_list = backend.recordCommandList(writer.buffer(), writer.size());
 
-            backend.flushMappedMemory(upload_buffer);
+            backend.unmapBuffer(upload_buffer);
             backend.submit(cc::span{meshupload_list});
             backend.flushGPU();
             backend.free(upload_buffer);
@@ -215,13 +225,13 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
 
     auto const f_create_sized_resources = [&] {
         // Create RT write texture
-        resources.rt_write_texture = backend.createTexture(backend.getBackbufferFormat(), backbuf_size, 1, texture_dimension::t2d, 1, true);
+        resources.rt_write_texture = backend.createTexture(msc_backbuf_format, backbuf_size, 1, texture_dimension::t2d, 1, true);
 
         // Shader table setup
         {
             {
                 resource_view uav_sve;
-                uav_sve.init_as_tex2d(resources.rt_write_texture, backend.getBackbufferFormat());
+                uav_sve.init_as_tex2d(resources.rt_write_texture, msc_backbuf_format);
 
                 resource_view srv_sve;
                 srv_sve.init_as_accel_struct(backend.getAccelStructBuffer(resources.tlas));
@@ -242,20 +252,20 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
             table_sizes = backend.calculateShaderTableSize(cc::span{str_raygen}, cc::span{str_miss}, cc::span{str_main_hit});
 
             {
-                resources.shader_table_raygen = backend.createMappedBuffer(table_sizes.ray_gen_stride_bytes * 1);
-                std::byte* const st_map = backend.getMappedMemory(resources.shader_table_raygen);
+                resources.shader_table_raygen = backend.createUploadBuffer(table_sizes.ray_gen_stride_bytes * 1);
+                std::byte* const st_map = backend.mapBuffer(resources.shader_table_raygen);
                 backend.writeShaderTable(st_map, resources.rt_pso, table_sizes.ray_gen_stride_bytes, cc::span{str_raygen});
             }
 
             {
-                resources.shader_table_miss = backend.createMappedBuffer(table_sizes.miss_stride_bytes * 1);
-                std::byte* const st_map = backend.getMappedMemory(resources.shader_table_miss);
+                resources.shader_table_miss = backend.createUploadBuffer(table_sizes.miss_stride_bytes * 1);
+                std::byte* const st_map = backend.mapBuffer(resources.shader_table_miss);
                 backend.writeShaderTable(st_map, resources.rt_pso, table_sizes.miss_stride_bytes, cc::span{str_miss});
             }
 
             {
-                resources.shader_table_hitgroups = backend.createMappedBuffer(table_sizes.hit_group_stride_bytes * 1);
-                std::byte* const st_map = backend.getMappedMemory(resources.shader_table_hitgroups);
+                resources.shader_table_hitgroups = backend.createUploadBuffer(table_sizes.hit_group_stride_bytes * 1);
+                std::byte* const st_map = backend.mapBuffer(resources.shader_table_hitgroups);
                 backend.writeShaderTable(st_map, resources.rt_pso, table_sizes.hit_group_stride_bytes, cc::span{str_main_hit});
             }
         }
@@ -264,7 +274,7 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
     f_create_sized_resources();
 
     auto const on_resize_func = [&]() {
-        backbuf_size = backend.getBackbufferSize();
+        backbuf_size = backend.getBackbufferSize(main_swapchain);
 
         f_free_sized_resources();
         f_create_sized_resources();
@@ -284,7 +294,7 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
         if (window.clearPendingResize())
         {
             if (!window.isMinimized())
-                backend.onResize({window.getWidth(), window.getHeight()});
+                backend.onResize(main_swapchain, window.getSize());
         }
 
         if (!window.isMinimized())
@@ -297,10 +307,10 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
             if (log_time >= 1750.f)
             {
                 log_time = 0.f;
-                LOG(info)("frametime: {}ms", frametime);
+                LOG("frametime: {}ms", frametime);
             }
 
-            if (backend.clearPendingResize())
+            if (backend.clearPendingResize(main_swapchain))
                 on_resize_func();
 
             {
@@ -326,7 +336,7 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
                     writer.add_command(dcmd);
                 }
 
-                auto const backbuffer = backend.acquireBackbuffer();
+                auto const backbuffer = backend.acquireBackbuffer(main_swapchain);
 
                 {
                     cmd::transition_resources tcmd;
@@ -352,7 +362,7 @@ void phi_test::run_raytracing_sample(phi::Backend& backend, sample_config const&
 
 
             // present
-            backend.present();
+            backend.present(main_swapchain);
         }
     }
 

@@ -6,7 +6,7 @@
 
 namespace phi_test
 {
-inline constexpr bool massive_sample = 0;
+inline constexpr bool massive_sample = false;
 
 inline constexpr float cam_dist = massive_sample ? 1000.f : 10.f;
 
@@ -41,8 +41,7 @@ inline constexpr auto sample_mesh_binary = massive_sample ? false : true;
 inline constexpr auto sample_albedo_path
     = massive_sample ? "res/arcana-sample-resources/phi/texture/uv_checker.png" : "res/arcana-sample-resources/phi/texture/ball/albedo.png";
 inline constexpr auto sample_normal_path = "res/arcana-sample-resources/phi/texture/ball/normal.png";
-inline constexpr auto sample_metallic_path = "res/arcana-sample-resources/phi/texture/ball/metallic.png";
-inline constexpr auto sample_roughness_path = "res/arcana-sample-resources/phi/texture/ball/roughness.png";
+inline constexpr auto sample_arm_path = "res/arcana-sample-resources/phi/texture/ball/arm.png";
 
 struct global_data
 {

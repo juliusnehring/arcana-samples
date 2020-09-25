@@ -7,7 +7,7 @@
 #include <arcana-incubator/device-abstraction/freefly_camera.hh>
 #include <arcana-incubator/device-abstraction/input.hh>
 #include <arcana-incubator/device-abstraction/timer.hh>
-#include <arcana-incubator/imgui/imgui_impl_pr.hh>
+
 #include <arcana-incubator/pr-util/resource_loading.hh>
 #include <arcana-incubator/pr-util/texture_processing.hh>
 
@@ -30,7 +30,7 @@ public:
     /// loads a mesh from disk
     [[nodiscard]] dmr::mesh loadMesh(char const* path, bool binary = false);
 
-    [[nodiscard]] dmr::material loadMaterial(char const* p_albedo, char const* p_normal, char const* p_metal, char const* p_rough);
+    [[nodiscard]] dmr::material loadMaterial(char const* p_albedo, char const* p_normal, char const* p_arm);
 
     void addInstance(dmr::mesh const& mesh, dmr::material const& mat, tg::mat4 transform)
     {
@@ -57,6 +57,8 @@ public:
 
     void execute(float dt);
 
+    inc::da::smooth_fps_cam& camera() { return mCamera; }
+
 private:
     bool handleEvents();
 
@@ -65,13 +67,13 @@ private:
 private:
     inc::da::SDLWindow* mWindow = nullptr;
     pr::Context mContext;
+    pr::auto_swapchain mSwapchain;
 
     inc::da::Timer mTimer;
     inc::da::input_manager mInput;
     inc::da::smooth_fps_cam mCamera;
 
     inc::pre::texture_processing mTexProcessingPSOs;
-    inc::ImGuiPhantasmImpl mImguiImpl;
 
     cc::vector<inc::pre::pr_mesh> mUniqueMeshes;
     cc::vector<pr::auto_texture> mUniqueTextures;

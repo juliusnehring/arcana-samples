@@ -70,9 +70,9 @@ MONTE_CARLO_TEST("mct equivalence")
         using container_t = decltype(container);
 
         addOp("def ctor", [] { return container_t(); });
-        addOp("clear", &container_t::clear);
+        addOp("clear", [](container_t& v) { v.clear(); });
         addOp("push_back", [](container_t& c, int v) { c.push_back(v); });
-        addOp("pop_back", &container_t::pop_back).when_not(&container_t::empty);
+        addOp("pop_back", [](container_t& v) { v.pop_back(); }).when_not([](container_t& v) { return v.empty(); });
 
         setPrinter<container_t>([](container_t const& c) -> cc::string {
             std::stringstream ss;
@@ -124,3 +124,25 @@ MONTE_CARLO_TEST("mct move-only")
     addInvariant("pos", [](cc::unique_ptr<int> const& i) { CHECK(*i >= 0); });
 }
 #endif
+
+MONTE_CARLO_TEST("mct inheritance")
+{
+    struct foo
+    {
+        int test() { return 4; }
+        bool invariant() const { return true; }
+    };
+    struct bar : foo
+    {
+        int test() { return 4; }
+    };
+
+    addValue("gen", foo());
+    addValue("gen", bar());
+    addOp("test", &foo::test).when(&foo::invariant);
+    addOp("test", &bar::test).when([](bar const& b) { return b.invariant(); });
+    // NOTE: this doesn't work because &bar::invariant has type "bool foo::*() const"
+    // addOp("test", &bar::test).when( &bar::invariant);
+
+    testEquivalence([](foo const&, bar const&) {});
+}

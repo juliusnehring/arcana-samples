@@ -48,11 +48,11 @@ add_subdirectory(extern/ctracer)
 # reflection and introspection
 add_subdirectory(extern/reflector)
 
-# multithreading
-add_subdirectory(extern/task-dispatcher)
-
 # logging
 add_subdirectory(extern/rich-log)
+
+# multithreading
+add_subdirectory(extern/task-dispatcher)
 
 # resources
 add_subdirectory(extern/resource-system)
@@ -78,6 +78,9 @@ add_subdirectory(extern/phantasm-renderer)
 
 # UI
 add_subdirectory(extern/structured-interface)
+
+# serialization
+add_subdirectory(extern/babel-serializer)
 
 # TODO: other libs
 
@@ -107,6 +110,7 @@ endif()
 
 option(ARC_DISABLE_EXCEPTIONS "Set compiler flags to disable exception handling" OFF)
 option(ARC_DISABLE_RTTI "Set compiler flags to disable RTTI" OFF)
+option(ARC_ENABLE_AVX2 "Set compiler flags to enable AVX2 instructions (and older ones included by it)" OFF)
 
 # ===============================================
 # Compile flags
@@ -118,6 +122,12 @@ if (MSVC)
     list(APPEND COMMON_COMPILER_FLAGS
         /MP
     )
+
+    if (ARC_ENABLE_AVX2)
+        list(APPEND COMMON_COMPILER_FLAGS
+            /arch:AVX2
+        )
+    endif()
 
     if (ARC_DISABLE_EXCEPTIONS)
         string(REPLACE "/EHsc" "/EHs-c- /D _HAS_EXCEPTIONS=0" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
@@ -131,6 +141,12 @@ else()
         -Wall
         -Wno-unused-variable
     )
+
+    if (ARC_ENABLE_AVX2)
+        list(APPEND COMMON_COMPILER_FLAGS
+            -mavx2
+        )
+    endif()
 
     if (ARC_DISABLE_EXCEPTIONS)
         list(APPEND COMMON_COMPILER_FLAGS -fno-exceptions)
@@ -217,6 +233,7 @@ foreach(TARGET_NAME
     resource-system
     clean-ranges
     phantasm-hardware-interface
+    babel-serializer
 )
     set_property(TARGET ${TARGET_NAME} PROPERTY FOLDER "Extern")
 endforeach()

@@ -6,9 +6,9 @@
 
 #include <arcana-incubator/device-abstraction/freefly_camera.hh>
 
-void dmr::scene::init(pr::Context& ctx, unsigned max_num_instances)
+void dmr::scene::init(pr::Context& ctx, unsigned num_backbuffers, unsigned max_num_instances)
 {
-    num_backbuffers = ctx.get_num_backbuffers();
+    this->num_backbuffers = num_backbuffers;
 
     instances.reserve(max_num_instances);
     instance_transforms.reserve(max_num_instances);
@@ -18,9 +18,6 @@ void dmr::scene::init(pr::Context& ctx, unsigned max_num_instances)
     {
         per_frame.cb_camdata = ctx.make_upload_buffer(sizeof(scene_gpudata));
         per_frame.sb_modeldata = ctx.make_upload_buffer(sizeof(instance_gpudata) * max_num_instances, sizeof(instance_gpudata));
-
-        per_frame.cb_camdata_map = ctx.get_buffer_map(per_frame.cb_camdata);
-        per_frame.sb_modeldata_map = ctx.get_buffer_map(per_frame.sb_modeldata);
     }
 
     current_frame_index = 0;
@@ -33,19 +30,12 @@ void dmr::scene::on_next_frame()
     is_history_a = !is_history_a;
 }
 
-void dmr::scene::upload_current_frame()
+void dmr::scene::upload_current_frame(pr::Context& ctx)
 {
     auto& frame = current_frame();
 
-    std::memcpy(frame.cb_camdata_map, &camdata, sizeof(scene_gpudata));
-    std::memcpy(frame.sb_modeldata_map, instance_transforms.data(), sizeof(instance_gpudata) * instance_transforms.size());
-}
-
-void dmr::scene::flush_current_frame_upload(pr::Context& ctx)
-{
-    auto& frame = current_frame();
-    ctx.flush_buffer_writes(frame.cb_camdata);
-    ctx.flush_buffer_writes(frame.sb_modeldata);
+    ctx.write_to_buffer(frame.cb_camdata, camdata);
+    ctx.write_to_buffer(frame.sb_modeldata, instance_transforms);
 }
 
 void dmr::scene_gpudata::fill_data(tg::isize2 res, tg::pos3 campos, tg::vec3 camforward, unsigned halton_index)
@@ -60,7 +50,7 @@ void dmr::scene_gpudata::fill_data(tg::isize2 res, tg::pos3 campos, tg::vec3 cam
     proj[2][1] = jitter_y;
     proj_inv = tg::inverse(proj);
 
-    view = tg::look_at_opengl(campos, camforward, tg::vec3(0, 1, 0));
+    view = tg::look_at_directx(campos, camforward, tg::vec3(0, 1, 0));
     view_inv = tg::inverse(view);
 
     vp = proj * view;
@@ -71,7 +61,4 @@ void dmr::scene_gpudata::fill_data(tg::isize2 res, tg::pos3 campos, tg::vec3 cam
 
     clean_vp = clean_proj * view;
     clean_vp_inv = tg::inverse(clean_vp);
-
-    cam_pos = campos;
-    runtime = 0.f;
 }
